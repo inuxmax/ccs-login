@@ -1,0 +1,150 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, userEvent, waitFor } from '@tests/setup/test-utils';
+import i18n from '@/lib/i18n';
+import { LanguageSwitcher } from '@/components/layout/language-switcher';
+import { TabNavigation } from '@/pages/settings/components/tab-navigation';
+import {
+  getInitialLocale,
+  LOCALE_STORAGE_KEY,
+  normalizeLocale,
+  persistLocale,
+} from '@/lib/locales';
+
+function flattenKeys(node: unknown, prefix = '', out = new Set<string>()): Set<string> {
+  if (typeof node !== 'object' || node === null) return out;
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    const nextKey = prefix ? `${prefix}.${key}` : key;
+    if (typeof value === 'string') {
+      out.add(nextKey);
+      continue;
+    }
+    if (value && typeof value === 'object') {
+      flattenKeys(value, nextKey, out);
+    }
+  }
+  return out;
+}
+
+function collectPlaceholders(text: string): string[] {
+  return Array.from(text.matchAll(/\{\{[^{}]+\}\}/g), (match) => match[0]).sort();
+}
+
+describe('Dashboard i18n', () => {
+  const storage = new Map<string, string>();
+  const localStorageMock = window.localStorage as unknown as {
+    getItem: ReturnType<typeof vi.fn>;
+    setItem: ReturnType<typeof vi.fn>;
+    removeItem: ReturnType<typeof vi.fn>;
+    clear: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(async () => {
+    storage.clear();
+    localStorageMock.getItem.mockImplementation((key: string) => storage.get(key) ?? null);
+    localStorageMock.setItem.mockImplementation((key: string, value: string) => {
+      storage.set(key, value);
+    });
+    localStorageMock.removeItem.mockImplementation((key: string) => {
+      storage.delete(key);
+    });
+    localStorageMock.clear.mockImplementation(() => {
+      storage.clear();
+    });
+    Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
+      configurable: true,
+      value: vi.fn(() => false),
+    });
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    class ResizeObserverMock {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    global.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+    await i18n.changeLanguage('en');
+  });
+
+  it('renders language switcher and changes locale', async () => {
+    render(<LanguageSwitcher />);
+
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.getByText('English')).toBeInTheDocument();
+    expect(screen.queryByText('Vietnamese')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(await screen.findByText('Simplified Chinese'));
+
+    await waitFor(() => {
+      expect(i18n.language).toBe('zh-CN');
+    });
+    expect(localStorageMock.setItem).toHaveBeenCalledWith(LOCALE_STORAGE_KEY, 'zh-CN');
+  }, 10000);
+
+  it('supports Vietnamese locale in switcher and persistence', async () => {
+    render(<LanguageSwitcher />);
+
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(await screen.findByText('Vietnamese'));
+
+    await waitFor(() => {
+      expect(i18n.language).toBe('vi');
+    });
+    expect(localStorageMock.setItem).toHaveBeenCalledWith(LOCALE_STORAGE_KEY, 'vi');
+    expect(normalizeLocale('vi-VN')).toBe('vi');
+  });
+
+  it('restores locale from persisted storage', () => {
+    persistLocale('vi');
+    expect(getInitialLocale()).toBe('vi');
+  });
+
+  it('shows Chinese labels on translated settings tabs', async () => {
+    await i18n.changeLanguage('zh-CN');
+
+    render(<TabNavigation activeTab="websearch" onTabChange={() => {}} />);
+
+    expect(screen.getByText('网页')).toBeInTheDocument();
+    expect(screen.getByText('环境')).toBeInTheDocument();
+    expect(screen.getByText('认证')).toBeInTheDocument();
+  });
+
+  it('keeps vi translation keys in parity with en and preserves placeholders', () => {
+    const resources = i18n.options.resources as
+      | Record<string, { translation: Record<string, unknown> }>
+      | undefined;
+
+    const enTranslation = resources?.en?.translation;
+    const viTranslation = resources?.vi?.translation;
+
+    expect(enTranslation).toBeDefined();
+    expect(viTranslation).toBeDefined();
+
+    const enKeys = flattenKeys(enTranslation);
+    const viKeys = flattenKeys(viTranslation);
+
+    expect([...viKeys].sort()).toEqual([...enKeys].sort());
+
+    for (const key of enKeys) {
+      const enValue = key
+        .split('.')
+        .reduce<unknown>((acc, part) => (acc as Record<string, unknown>)?.[part], enTranslation);
+      const viValue = key
+        .split('.')
+        .reduce<unknown>((acc, part) => (acc as Record<string, unknown>)?.[part], viTranslation);
+
+      if (typeof enValue !== 'string' || typeof viValue !== 'string') continue;
+      expect(collectPlaceholders(viValue)).toEqual(collectPlaceholders(enValue));
+    }
+  });
+});

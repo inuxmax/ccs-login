@@ -1,0 +1,227 @@
+/**
+ * Config Command Handler
+ *
+ * Launches web-based configuration dashboard.
+ * Ensures CLIProxy service is running for dashboard features.
+ * Usage: ccs config [--port PORT] [--dev]
+ */
+
+import fs from 'fs';
+import path from 'path';
+import getPort from 'get-port';
+import open from 'open';
+import { startServer } from '../web-server';
+import { setupGracefulShutdown } from '../web-server/shutdown';
+import { ensureCliproxyService } from '../cliproxy/service-manager';
+import { CLIPROXY_DEFAULT_PORT } from '../cliproxy/config-generator';
+import { initUI, header, ok, info, warn, fail } from '../utils/ui';
+import { extractOption, hasAnyFlag } from './arg-extractor';
+
+function loadLocalEnvFile(): void {
+  const envFilePath = path.resolve('.env.local');
+  if (!fs.existsSync(envFilePath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(envFilePath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line
+      .slice(separatorIndex + 1)
+      .trim()
+      .replace(/^(["'])(.*)\1$/, '$2');
+
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+interface ConfigOptions {
+  port?: number;
+  dev?: boolean;
+}
+
+/**
+ * Parse command line arguments
+ */
+function parseArgs(args: string[]): ConfigOptions {
+  const result: ConfigOptions = {};
+
+  if (hasAnyFlag(args, ['--help', '-h'])) {
+    showHelp();
+    process.exit(0);
+  }
+
+  const portOption = extractOption(args, ['--port', '-p']);
+  if (portOption.found) {
+    if (portOption.missingValue || !portOption.value) {
+      console.error(fail('Invalid port number'));
+      process.exit(1);
+    }
+
+    const port = parseInt(portOption.value, 10);
+    if (!isNaN(port) && port > 0 && port < 65536) {
+      result.port = port;
+    } else {
+      console.error(fail('Invalid port number'));
+      process.exit(1);
+    }
+  }
+
+  result.dev = hasAnyFlag(args, ['--dev']);
+  return result;
+}
+
+/**
+ * Show help message
+ */
+function showHelp(): void {
+  console.log('');
+  console.log('Usage: ccs config [command] [options]');
+  console.log('');
+  console.log('Open web-based configuration dashboard');
+  console.log('');
+  console.log('Commands:');
+  console.log('  auth               Manage dashboard authentication');
+  console.log('    auth setup       Configure username and password');
+  console.log('    auth show        Display current auth status');
+  console.log('    auth disable     Disable authentication');
+  console.log('');
+  console.log('  image-analysis     Manage image analysis settings');
+  console.log('    --enable         Enable image analysis via CLIProxy');
+  console.log('    --disable        Disable image analysis');
+  console.log('    --timeout <s>    Set analysis timeout (seconds)');
+  console.log('    --set-model <p> <m>  Set model for provider');
+  console.log('');
+  console.log('  thinking           Manage thinking/reasoning settings');
+  console.log('    --mode <mode>    Set mode (auto, off, manual)');
+  console.log('    --override <l>   Set persistent override level');
+  console.log('    --clear-override Remove persistent override');
+  console.log('    --tier <t> <l>   Set tier default level');
+  console.log('    --provider-override <p> <t> <l> Set provider tier override');
+  console.log('    --clear-provider-override <p> [t] Remove provider override');
+  console.log('');
+  console.log('Options:');
+  console.log('  --port, -p PORT    Specify server port (default: auto-detect)');
+  console.log('  --dev              Development mode with Vite HMR');
+  console.log('  --help, -h         Show this help message');
+  console.log('');
+  console.log('Examples:');
+  console.log('  ccs config              Auto-detect available port');
+  console.log('  ccs config --port 3000  Use specific port');
+  console.log('  ccs config --dev        Development mode with hot reload');
+  console.log('  ccs config auth setup   Configure dashboard login');
+  console.log('  ccs config image-analysis          Show image settings');
+  console.log('  ccs config image-analysis --enable Enable feature');
+  console.log('  ccs config thinking                Show thinking settings');
+  console.log('  ccs config thinking --mode auto    Set auto mode');
+  console.log('');
+}
+
+/**
+ * Handle config command
+ */
+export async function handleConfigCommand(args: string[]): Promise<void> {
+  loadLocalEnvFile();
+
+  // Route subcommands before dashboard launch
+  if (args[0] === 'auth') {
+    const { handleConfigAuthCommand } = await import('./config-auth');
+    await handleConfigAuthCommand(args.slice(1));
+    return;
+  }
+
+  // Route image-analysis subcommand
+  if (args[0] === 'image-analysis') {
+    const { handleConfigImageAnalysisCommand } = await import('./config-image-analysis-command');
+    await handleConfigImageAnalysisCommand(args.slice(1));
+    return;
+  }
+
+  // Route thinking subcommand
+  if (args[0] === 'thinking') {
+    const { handleConfigThinkingCommand } = await import('./config-thinking-command');
+    await handleConfigThinkingCommand(args.slice(1));
+    return;
+  }
+
+  await initUI();
+
+  const options = parseArgs(args);
+  const verbose = options.dev || false;
+
+  console.log(header('CCS Config Dashboard'));
+  console.log('');
+
+  // Ensure CLIProxy service is running for dashboard features
+  console.log(info('Starting CLIProxy service...'));
+  const cliproxyResult = await ensureCliproxyService(CLIPROXY_DEFAULT_PORT, verbose);
+
+  if (cliproxyResult.started) {
+    if (cliproxyResult.alreadyRunning) {
+      console.log(ok(`CLIProxy already running on port ${cliproxyResult.port}`));
+      if (cliproxyResult.configRegenerated) {
+        console.log(warn('Config updated - restart CLIProxy to apply changes'));
+      }
+    } else {
+      console.log(ok(`CLIProxy started on port ${cliproxyResult.port}`));
+    }
+  } else {
+    console.log(warn(`CLIProxy not available: ${cliproxyResult.error}`));
+    console.log(info('Dashboard will work but Control Panel/Stats may be limited'));
+  }
+  console.log('');
+
+  console.log(info('Starting dashboard server...'));
+
+  // Find available port
+  const port =
+    options.port ??
+    (await getPort({
+      port: [3000, 3001, 3002, 8000, 8080],
+    }));
+
+  try {
+    // Start server
+    const { server, wss, cleanup } = await startServer({ port, dev: options.dev });
+
+    // Setup graceful shutdown
+    setupGracefulShutdown(server, wss, cleanup);
+
+    const url = `http://localhost:${port}`;
+
+    if (options.dev) {
+      console.log(ok(`Dev Server: ${url}`));
+      console.log('');
+      console.log(info('HMR enabled - UI changes will hot-reload'));
+    } else {
+      console.log(ok(`Dashboard: ${url}`));
+    }
+    console.log('');
+
+    // Open browser
+    try {
+      await open(url, { wait: false });
+      console.log(info('Browser opened automatically'));
+    } catch {
+      console.log(info(`Open manually: ${url}`));
+    }
+
+    console.log('');
+    console.log(info('Press Ctrl+C to stop'));
+  } catch (error) {
+    console.error(fail(`Failed to start server: ${(error as Error).message}`));
+    process.exit(1);
+  }
+}

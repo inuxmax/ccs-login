@@ -1,0 +1,45 @@
+# User config files
+# Note: config files now live in ~/.ccs/, not in project directory
+repomix-output.xml
+.ccs.json
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Plans directory
+plans/
+*.tgz
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript build output
+dist/
+*.tsbuildinfo
+
+# Package lock files (use bun.lock only)
+yarn.lock
+pnpm-lock.yaml
+package-lock.json
+
+.claude/active-plan
+.claude/agent-memory/
+
+# Logs directory
+logs/
+
+# CI-generated files
+.dev-release-info.json
+
+# Test coverage
+ui/coverage/

@@ -1,0 +1,219 @@
+/**
+ * Config Routes - Unified config management and migration
+ */
+
+import { Router, Request, Response } from 'express';
+import * as fs from 'fs';
+import {
+  hasUnifiedConfig,
+  loadUnifiedConfig,
+  saveUnifiedConfig,
+  getConfigFormat,
+  getConfigYamlPath,
+} from '../../config/unified-config-loader';
+import {
+  needsMigration,
+  migrate,
+  rollback,
+  getBackupDirectories,
+} from '../../config/migration-manager';
+import { isUnifiedConfig } from '../../config/unified-config-types';
+import {
+  DEFAULT_ACCOUNT_CONTINUITY_MODE,
+  isValidContextGroupName,
+  normalizeContextGroupName,
+} from '../../auth/account-context';
+
+const router = Router();
+
+function validateAndNormalizeAccountContextMetadata(config: unknown): string | null {
+  if (typeof config !== 'object' || config === null) {
+    return 'Invalid config payload';
+  }
+
+  const candidate = config as Record<string, unknown>;
+  const accounts = candidate.accounts;
+  if (accounts === undefined) {
+    return null;
+  }
+
+  if (typeof accounts !== 'object' || accounts === null || Array.isArray(accounts)) {
+    return 'Invalid config.accounts: expected object';
+  }
+
+  for (const [accountName, accountValue] of Object.entries(accounts as Record<string, unknown>)) {
+    if (typeof accountValue !== 'object' || accountValue === null || Array.isArray(accountValue)) {
+      return `Invalid config.accounts.${accountName}: expected object`;
+    }
+
+    const account = accountValue as Record<string, unknown>;
+    const mode = account.context_mode;
+    const group = account.context_group;
+    const continuity = account.continuity_mode;
+
+    if (mode !== undefined && mode !== 'isolated' && mode !== 'shared') {
+      return `Invalid config.accounts.${accountName}.context_mode: expected isolated|shared`;
+    }
+
+    if (group !== undefined && typeof group !== 'string') {
+      return `Invalid config.accounts.${accountName}.context_group: expected string`;
+    }
+
+    if (continuity !== undefined && continuity !== 'standard' && continuity !== 'deeper') {
+      return `Invalid config.accounts.${accountName}.continuity_mode: expected standard|deeper`;
+    }
+
+    if (mode !== 'shared' && group !== undefined) {
+      return `Invalid config.accounts.${accountName}: context_group requires context_mode=shared`;
+    }
+
+    if (mode !== 'shared' && continuity !== undefined) {
+      return `Invalid config.accounts.${accountName}: continuity_mode requires context_mode=shared`;
+    }
+
+    if (mode === 'shared' && typeof group === 'string' && group.trim().length > 0) {
+      const normalizedGroup = normalizeContextGroupName(group);
+      if (!isValidContextGroupName(normalizedGroup)) {
+        return `Invalid config.accounts.${accountName}.context_group`;
+      }
+      account.context_group = normalizedGroup;
+    }
+
+    if (mode === 'shared') {
+      account.continuity_mode =
+        continuity === 'deeper' ? 'deeper' : DEFAULT_ACCOUNT_CONTINUITY_MODE;
+    }
+
+    if (mode === 'shared' && typeof group === 'string' && group.trim().length === 0) {
+      return `Invalid config.accounts.${accountName}.context_group: shared mode requires a non-empty value`;
+    }
+
+    if (mode === 'isolated' && group !== undefined) {
+      delete account.context_group;
+    }
+
+    if (mode === 'isolated' && continuity !== undefined) {
+      delete account.continuity_mode;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * GET /api/config/format - Return current config format and migration status
+ */
+router.get('/format', (_req: Request, res: Response): void => {
+  try {
+    res.json({
+      format: getConfigFormat(),
+      migrationNeeded: needsMigration(),
+      backups: getBackupDirectories(),
+    });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * GET /api/config - Return unified config (excludes secrets)
+ */
+router.get('/', (_req: Request, res: Response): void => {
+  if (!hasUnifiedConfig()) {
+    res.status(400).json({ error: 'Unified config not enabled' });
+    return;
+  }
+
+  const config = loadUnifiedConfig();
+  if (!config) {
+    res.status(500).json({ error: 'Failed to load config' });
+    return;
+  }
+
+  res.json(config);
+});
+
+/**
+ * GET /api/config/raw - Return raw YAML content for display
+ */
+router.get('/raw', (_req: Request, res: Response): void => {
+  const yamlPath = getConfigYamlPath();
+  if (!fs.existsSync(yamlPath)) {
+    res.status(404).json({ error: 'Config file not found' });
+    return;
+  }
+  try {
+    const content = fs.readFileSync(yamlPath, 'utf8');
+    res.type('text/plain').send(content);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * PUT /api/config - Update unified config
+ */
+router.put('/', (req: Request, res: Response): void => {
+  const config = req.body;
+
+  if (!isUnifiedConfig(config)) {
+    res.status(400).json({ error: 'Invalid config format' });
+    return;
+  }
+
+  const accountContextError = validateAndNormalizeAccountContextMetadata(config);
+  if (accountContextError) {
+    res.status(400).json({ error: accountContextError });
+    return;
+  }
+
+  try {
+    saveUnifiedConfig(config);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/config/migrate - Trigger migration from JSON to YAML
+ */
+router.post('/migrate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const dryRun = req.query.dryRun === 'true';
+    if (!needsMigration()) {
+      res.json({
+        success: true,
+        migratedFiles: [],
+        warnings: [],
+        alreadyMigrated: true,
+      });
+      return;
+    }
+    const result = await migrate(dryRun);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+/**
+ * POST /api/config/rollback - Rollback migration to JSON format
+ */
+router.post('/rollback', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { backupPath } = req.body;
+
+    if (!backupPath || typeof backupPath !== 'string') {
+      res.status(400).json({ error: 'Missing required field: backupPath' });
+      return;
+    }
+
+    const success = await rollback(backupPath);
+    res.json({ success });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
+export default router;

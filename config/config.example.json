@@ -1,0 +1,6 @@
+{
+  "profiles": {
+    "glm": "~/.ccs/glm.settings.json",
+    "default": "~/.claude/settings.json"
+  }
+}
