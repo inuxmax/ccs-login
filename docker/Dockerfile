@@ -13,7 +13,7 @@ ENV BUN_INSTALL=/usr/local/bun
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates unzip \
+  && apt-get install -y --no-install-recommends curl ca-certificates git unzip \
   && rm -rf /var/lib/apt/lists/*
 
 # Install specific bun version
