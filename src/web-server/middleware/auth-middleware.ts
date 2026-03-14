@@ -36,6 +36,46 @@ const PUBLIC_PATHS = [
   '/api/health',
 ];
 
+const CONTROL_API_PATH_PREFIXES = ['/api/cliproxy', '/api/cliproxy-server'];
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    crypto.timingSafeEqual(Buffer.from(a), Buffer.from(a));
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+function getControlApiSecret(): string | null {
+  const secret = process.env.CONTROL_API_SECRET?.trim();
+  return secret ? secret : null;
+}
+
+function getControlApiPresentedSecret(req: Request): string | null {
+  const headerSecret = req.get('x-management-secret')?.trim();
+  if (headerSecret) {
+    return headerSecret;
+  }
+
+  const authorization = req.get('authorization')?.trim() ?? '';
+  if (/^bearer\s+/i.test(authorization)) {
+    const token = authorization.replace(/^bearer\s+/i, '').trim();
+    return token ? token : null;
+  }
+
+  return null;
+}
+
+function hasValidControlApiSecret(req: Request): boolean {
+  const expected = getControlApiSecret();
+  if (!expected) return false;
+
+  const presented = getControlApiPresentedSecret(req);
+  if (!presented) return false;
+
+  return timingSafeEqual(presented, expected);
+}
+
 /** Path to persistent session secret file */
 function getSessionSecretPath() {
   return path.join(getCcsDir(), '.session-secret');
@@ -129,6 +169,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   // Allow public paths (case-insensitive)
   const pathLower = req.path.toLowerCase();
   if (PUBLIC_PATHS.some((p) => pathLower.startsWith(p))) {
+    return next();
+  }
+
+  if (
+    req.path.startsWith('/api/') &&
+    CONTROL_API_PATH_PREFIXES.some((p) => pathLower.startsWith(p)) &&
+    hasValidControlApiSecret(req)
+  ) {
     return next();
   }
 
