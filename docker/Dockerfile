@@ -13,7 +13,7 @@ ENV BUN_INSTALL=/usr/local/bun
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates git unzip \
+  && apt-get install -y --no-install-recommends curl ca-certificates unzip \
   && rm -rf /var/lib/apt/lists/*
 
 # Install specific bun version
@@ -72,8 +72,7 @@ COPY --from=build /app/LICENSE ./LICENSE
 # Install AI CLI tools (using latest - pin versions in production if needed)
 # These are optional tools for docker exec usage
 RUN npm install -g @google/gemini-cli @vibe-kit/grok-cli @anthropic-ai/claude-code \
-  && npm install -g git+https://github.com/inuxmax/ccs-login.git --force \
-  && npm cache clean --force \
+  && npm install -g @zemiai/ccs --force \
   && su -s /bin/bash node -c 'curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path' \
   && ln -sf /app/dist/ccs.js /usr/local/bin/ccs
 

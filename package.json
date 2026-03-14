@@ -1,5 +1,5 @@
 {
-  "name": "@kaitranntt/ccs",
+  "name": "@zemiai/ccs",
   "version": "7.53.0",
   "description": "Claude Code Switch - Instant profile switching between Claude Sonnet 4.5 and GLM 4.6",
   "keywords": [
@@ -10,13 +10,13 @@
     "profile",
     "switch"
   ],
-  "homepage": "https://github.com/kaitranntt/ccs",
+  "homepage": "https://github.com/inuxmax/ccs-login",
   "bugs": {
-    "url": "https://github.com/kaitranntt/ccs/issues"
+    "url": "https://github.com/inuxmax/ccs-login/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kaitranntt/ccs.git"
+    "url": "git+https://github.com/inuxmax/ccs-login.git"
   },
   "license": "MIT",
   "author": {
