@@ -18,31 +18,34 @@ import { initUI, header, ok, info, warn, fail } from '../utils/ui';
 import { extractOption, hasAnyFlag } from './arg-extractor';
 
 function loadLocalEnvFile(): void {
-  const envFilePath = path.resolve('.env.local');
-  if (!fs.existsSync(envFilePath)) {
-    return;
-  }
-
-  const content = fs.readFileSync(envFilePath, 'utf8');
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) {
+  const candidates = ['.env', '.env.local'];
+  for (const fileName of candidates) {
+    const envFilePath = path.resolve(fileName);
+    if (!fs.existsSync(envFilePath)) {
       continue;
     }
 
-    const separatorIndex = line.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
+    const content = fs.readFileSync(envFilePath, 'utf8');
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
 
-    const key = line.slice(0, separatorIndex).trim();
-    const value = line
-      .slice(separatorIndex + 1)
-      .trim()
-      .replace(/^(["'])(.*)\1$/, '$2');
+      const separatorIndex = line.indexOf('=');
+      if (separatorIndex <= 0) {
+        continue;
+      }
 
-    if (key && process.env[key] === undefined) {
-      process.env[key] = value;
+      const key = line.slice(0, separatorIndex).trim();
+      const value = line
+        .slice(separatorIndex + 1)
+        .trim()
+        .replace(/^(["'])(.*)\1$/, '$2');
+
+      if (key && process.env[key] === undefined) {
+        process.env[key] = value;
+      }
     }
   }
 }
