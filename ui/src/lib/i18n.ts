@@ -2304,7 +2304,7 @@ const resources = {
       },
       nav: {
         general: 'Chung',
-        home: 'Trang chủ',
+        home: 'Trang chủ CCS',
         analytics: 'Phân tích',
         identityAccess: 'Nhận dạng & Quyền truy cập',
         apiProfiles: 'Hồ sơ API',
