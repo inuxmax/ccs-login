@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { WebSocketServer } from 'ws';
@@ -14,6 +15,36 @@ import { setupWebSocket } from './websocket';
 import { createSessionMiddleware, authMiddleware } from './middleware/auth-middleware';
 import { startAutoSyncWatcher, stopAutoSyncWatcher } from '../cliproxy/sync';
 import { shutdownUsageAggregator } from './usage/aggregator';
+
+function loadLocalEnvFile(): void {
+  const envFilePath = path.resolve('.env.local');
+  if (!fs.existsSync(envFilePath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(envFilePath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line
+      .slice(separatorIndex + 1)
+      .trim()
+      .replace(/^(["'])(.*)\1$/, '$2');
+
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
 
 export interface ServerOptions {
   port: number;
@@ -31,6 +62,8 @@ export interface ServerInstance {
  * Start Express server with WebSocket support
  */
 export async function startServer(options: ServerOptions): Promise<ServerInstance> {
+  loadLocalEnvFile();
+
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({
