@@ -21,6 +21,14 @@ function getStdout(command) {
   return execSync(command, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 }
 
+function getBunExecPath() {
+  const execPath = typeof process.execPath === 'string' ? process.execPath : '';
+  if (execPath.toLowerCase().includes('bun')) {
+    return execPath;
+  }
+  return 'bun';
+}
+
 function main() {
   const repoRoot = path.resolve(__dirname, '..');
   process.chdir(repoRoot);
@@ -76,8 +84,9 @@ function main() {
   }
 
   console.log('[i] Running CI-equivalent local checks...');
-  run('bun', ['run', 'build:all']);
-  run('bun', ['run', 'validate']);
+  const bunPath = getBunExecPath();
+  run(bunPath, ['run', 'build:all']);
+  run(bunPath, ['run', 'validate']);
   console.log('[OK] CI parity gate passed.');
 }
 
